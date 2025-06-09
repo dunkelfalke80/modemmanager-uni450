@@ -1142,7 +1142,7 @@ if plugins_options['zte']
 endif
 
 # plugin: uni450
-if plugins['uni450']
+if plugins_options['uni450']
   uni450_inc = include_directories('uni450')
   common_c_args = '-DMM_MODULE_NAME="uni450"'
 
@@ -1150,16 +1150,10 @@ if plugins['uni450']
     'uni450/mm-plugin-uni450.c'
   )
 
-  plugins += {
-    'uni450': {
+  plugins += {'plugin-uni450': {
       'plugin': true,
-      'module': {
-        'sources': sources,
-        'include_directories': plugins_incs + [uni450_inc],
-        'c_args': common_c_args
-      }
-    }
-  }
+      'module': {'sources': sources, 'include_directories': plugins_incs + [uni450_inc], 'c_args': common_c_args}
+    }}
 endif
 
 # plugin: netprisma

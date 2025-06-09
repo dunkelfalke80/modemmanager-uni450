@@ -12,33 +12,46 @@
  *
  */
 
+ #include <string.h>
+#include <termios.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <getopt.h>
+#include <time.h>
+#include <gmodule.h>
+
+#define _LIBMM_INSIDE_MM
+#include <libmm-glib.h>
+
 #include "mm-plugin-uni450.h"
 #include "mm-port.h"
-#include "mm-broadband-modem-generic.h"
 #include "mm-bearer.h"
-#include "mm-log-utils.h"
 
 #define USB_VENDOR_UNI450   0x1076
 #define USB_PRODUCT_UNI450  0x9082
 
-struct _MMPluginUni450
-{
-    MMPlugin parent;
-};
-
 G_DEFINE_TYPE (MMPluginUni450, mm_plugin_uni450, MM_TYPE_PLUGIN)
 
 static MMPortGrabResult
-uni450_grab_port (MMPlugin *self, MMPort *port, GError **error)
+static MMPortGrabResult
+uni450_grab_port (MMPlugin    *self,
+                  MMPort      *port,
+                  MMPortProbe *probe,
+                  GError     **error)
 {
     guint16 vid = mm_port_get_vendor (port);
     guint16 pid = mm_port_get_product(port);
 
     if (vid == USB_VENDOR_UNI450 && pid == USB_PRODUCT_UNI450) {
         mm_debug ("[uni450] claiming port %s", mm_port_get_device (port));
+        *probe = MM_PORT_PROBE_VENDOR_PRODUCT;
         return MM_PORT_GRAB_RESULT_CLAIMED;
     }
-    return MM_PLUGIN_CLASS (mm_plugin_uni450_parent_class)->grab_port (self, port, error);
+    return MM_PLUGIN_CLASS (mm_plugin_uni450_parent_class)
+            ->grab_port (self, port, probe, error);
 }
 
 /* This is called when the generic modem base wants to start data.
