@@ -1141,6 +1141,27 @@ if plugins_options['zte']
   plugins_udev_rules += files('zte/77-mm-zte-port-types.rules')
 endif
 
+# plugin: uni450
+if plugins['uni450']
+  uni450_inc = include_directories('uni450')
+  common_c_args = '-DMM_MODULE_NAME="uni450"'
+
+  sources = files(
+    'uni450/mm-plugin-uni450.c'
+  )
+
+  plugins += {
+    'uni450': {
+      'plugin': true,
+      'module': {
+        'sources': sources,
+        'include_directories': plugins_incs + [uni450_inc],
+        'c_args': common_c_args
+      }
+    }
+  }
+endif
+
 # plugin: netprisma
 if plugins_options['netprisma']
   test_udev_rules_dir_c_args = ['-DTESTUDEVRULESDIR_NETPRISMA="@0@"'.format(plugins_dir / 'netprisma')]

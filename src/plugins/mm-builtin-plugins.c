@@ -148,6 +148,9 @@ MMPlugin *mm_plugin_create_zte (void);
 #if defined ENABLE_PLUGIN_NETPRISMA
 MMPlugin *mm_plugin_create_netprisma (void);
 #endif
+#if defined ENABLE_PLUGIN_UNI450
+MMPlugin *mm_plugin_create_uni450 (void);
+#endif
 
 GList *
 mm_builtin_plugins_load (void)
@@ -285,6 +288,9 @@ mm_builtin_plugins_load (void)
 #endif
 #if defined ENABLE_PLUGIN_NETPRISMA
     PREPEND_PLUGIN (netprisma);
+#endif
+#if defined ENABLE_PLUGIN_UNI450
+    PREPEND_PLUGIN (uni450);
 #endif
 #undef PREPEND_PLUGIN
     return builtin_plugins;
