@@ -12,116 +12,133 @@
  *
  */
 
- #include <string.h>
-#include <termios.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <getopt.h>
-#include <time.h>
+#include <config.h>
 #include <gmodule.h>
-
-#define _LIBMM_INSIDE_MM
-#include <libmm-glib.h>
+#include <glib.h>
+#include <glib-object.h>
 
 #include "mm-plugin-uni450.h"
-#include "mm-port.h"
-#include "mm-bearer.h"
+#include "mm-broadband-modem.h"
+#include "mm-port-serial-at.h"
+#include "mm-log-object.h"
 
-#define USB_VENDOR_UNI450   0x1076
-#define USB_PRODUCT_UNI450  0x9082
+G_MODULE_EXPORT MMPlugin *mm_plugin_create (void);
 
-G_DEFINE_TYPE (MMPluginUni450, mm_plugin_uni450, MM_TYPE_PLUGIN)
-
-static MMPortGrabResult
-static MMPortGrabResult
-uni450_grab_port (MMPlugin    *self,
-                  MMPort      *port,
-                  MMPortProbe *probe,
-                  GError     **error)
+static MMBaseModem *
+create_modem (MMPlugin *self,
+              const gchar *device,
+              const gchar *physdev,
+              const gchar **drivers,
+              guint16 vendor,
+              guint16 product,
+              guint16 subsystem_vendor,
+              guint16 subsystem_product,
+              GList *probes,
+              GError **error)
 {
-    guint16 vid = mm_port_get_vendor (port);
-    guint16 pid = mm_port_get_product(port);
-
-    if (vid == USB_VENDOR_UNI450 && pid == USB_PRODUCT_UNI450) {
-        mm_debug ("[uni450] claiming port %s", mm_port_get_device (port));
-        *probe = MM_PORT_PROBE_VENDOR_PRODUCT;
-        return MM_PORT_GRAB_RESULT_CLAIMED;
-    }
-    return MM_PLUGIN_CLASS (mm_plugin_uni450_parent_class)
-            ->grab_port (self, port, probe, error);
+    return MM_BASE_MODEM (mm_broadband_modem_new (device,
+                                                   physdev,
+                                                   drivers,
+                                                   mm_plugin_get_name (self),
+                                                   vendor,
+                                                   product));
 }
 
-/* This is called when the generic modem base wants to start data.
- * We override it to run AT+CGDCONT and AT+CGATT, then do RNDIS up + DHCP.
- */
-static void
-uni450_connect_bearer (MMBroadbandModemGeneric  *modem,
-                       MMBearer                 *bearer,
-                       GCancellable             *cancellable,
-                       GAsyncReadyCallback       callback,
-                       gpointer                  user_data)
+static gboolean
+grab_port (MMPlugin     *self,
+           MMBaseModem  *modem,
+           MMPortProbe  *probe,
+           GError      **error)
 {
-    GError     *err = NULL;
-    gchar      *resp;
-    const char *iface = "enx885d90efffff";    /* adjust if yours differs */
-    const char *apn   = "internet.t-mobile";  /* <— replace or pull from config */
+    MMPortSerialAtFlag pflags = MM_PORT_SERIAL_AT_FLAG_NONE_NO_GENERIC;
+    MMPortType         ptype;
 
-    /* 1) define PDP context */
-    resp = mm_base_modem_run_command_sync (MM_BASE_MODEM (modem),
-                                          "AT+CGDCONT=1,\"IP\",\"%s\"", 10,
-                                          cancellable, &err,
-                                          apn);
-    if (err) {
-        mm_critical ("%s: CGDCONT failed: %s", __func__, err->message);
-        g_clear_error (&err);
+    ptype = mm_port_probe_get_port_type (probe);
+
+    /* Only handle AT interfaces, ignore everything else */
+    if (ptype != MM_PORT_TYPE_AT)
+        return FALSE;
+
+    /* Skip if a primary AT port is already present */
+    if (mm_base_modem_peek_port_primary (modem))
+        return FALSE;
+
+    /* First AT seen ==> mark as PRIMARY */
+    pflags |= MM_PORT_SERIAL_AT_FLAG_PRIMARY;
+
+    if (mm_base_modem_grab_port (modem,
+                                 mm_port_probe_peek_port (probe),
+                                 mm_port_probe_get_port_group (probe),
+                                 ptype,
+                                 pflags,
+                                 error))
+    {
+        mm_obj_info (self,
+                     "(%s/%s) primary AT port grabbed",
+                     mm_port_probe_get_port_subsys (probe),
+                     mm_port_probe_get_port_name  (probe));
+        g_message ("ModemManager UNI450: AT port acquired: %s",
+                   mm_port_probe_get_port_name (probe));
+        return TRUE;
     }
-    g_free (resp);
 
-    /* 2) attach */
-    resp = mm_base_modem_run_command_sync (MM_BASE_MODEM (modem),
-                                          "AT+CGATT=1", 10,
-                                          cancellable, &err);
-    if (err) {
-        mm_critical ("%s: CGATT failed: %s", __func__, err->message);
-        g_clear_error (&err);
-    }
-    g_free (resp);
-
-    /* 3) bring up RNDIS + DHCP */
-    system ("ip link set %s up", iface);
-    system ("dhclient -1 %s", iface);
-
-    /* 4) notify ModemManager that the bearer is now connected */
-    mm_bearer_connected (bearer, NULL);
-
-    /* finish */
-    callback (modem, user_data);
+    return FALSE;
 }
 
-static void
-mm_plugin_uni450_class_init (MMPluginUni450Class *klass)
+/*****************************************************************************/
+
+G_MODULE_EXPORT MMPlugin *
+mm_plugin_create (void)
 {
-    MMPluginClass *pclass = MM_PLUGIN_CLASS (klass);
+    static const gchar *subsystems[] = { "tty", NULL };
+    static const guint16 vendor_ids[] = { USB_VID_UNI450, 0 };
 
-    pclass->grab_port          = uni450_grab_port;
-
-    /* Hook up our connect_bearer override */
-    MMBroadbandModemGenericClass *gbc =
-        MMBROADBAND_MODEM_GENERIC_CLASS (klass);
-    gbc->connect_bearer_async  = uni450_connect_bearer;
+    return MM_PLUGIN (
+        g_object_new (MM_TYPE_PLUGIN_UNI450,
+                      MM_PLUGIN_NAME,               "UNI450",
+                      MM_PLUGIN_ALLOWED_SUBSYSTEMS, subsystems,
+                      MM_PLUGIN_ALLOWED_VENDOR_IDS, vendor_ids,
+                      MM_PLUGIN_ALLOWED_AT,         TRUE,
+                      NULL));
 }
 
 static void
 mm_plugin_uni450_init (MMPluginUni450 *self)
 {
-    /* no instance data needed */
 }
 
-/* factory */
-MMPlugin * mm_plugin_uni450_new (void)
+static void
+mm_plugin_uni450_class_init (MMPluginUni450Class *klass)
 {
-    return g_object_new (MM_TYPE_PLUGIN_UNI450, NULL);
+    MMPluginClass *plugin_class = MM_PLUGIN_CLASS (klass);
+
+    plugin_class->create_modem = create_modem;
+    plugin_class->grab_port = grab_port;
+}
+
+GType
+mm_plugin_uni450_get_type (void)
+{
+    static GType g_define_type_id = 0;
+
+    if (g_once_init_enter (&g_define_type_id)) {
+        GType new_type = g_type_register_static (MM_TYPE_PLUGIN,
+                                                 "MMPluginUni450",
+                                                 &(GTypeInfo) {
+                                                     sizeof (MMPluginUni450Class),
+                                                     NULL,
+                                                     NULL,
+                                                     (GClassInitFunc) mm_plugin_uni450_class_init,
+                                                     NULL,
+                                                     NULL,
+                                                     sizeof (MMPluginUni450),
+                                                     0,
+                                                     (GInstanceInitFunc) mm_plugin_uni450_init,
+                                                     NULL
+                                                 },
+                                                 0);
+        g_once_init_leave (&g_define_type_id, new_type);
+    }
+
+    return g_define_type_id;
 }
